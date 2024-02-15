@@ -180,7 +180,93 @@ The reason why we build contigs with the six samples processed together is that 
 -2 /home/kunyin71/reference_alignment/Hep174_S194/unaligned_2.fastq,/home/kunyin71/reference_alignment/Hep147_S196/unaligned_2.fastq,/home/kunyin71/reference_alignment/Hep184_S197/unaligned_2.fastq,/home/kunyin71/reference_alignment/Hep225_S198/unaligned_2.fastq,/home/kunyin71/reference_alignment/Hep20_S193/unaligned_2.fastq,/home/kunyin71/reference_alignment/hep161/unaligned_2.fastq \
 -o /home/kunyin71/build_contigs/results \
 -t 20
+
 ```
+### Gene prediction with prodigal
+
+```
+#!/bin/bash
+#SBATCH -N 1 ## 
+#SBATCH -n 20 ## cores, chisholm have 10 nodes each with 250 GB ram and 20 cpus/cores
+#SBATCH -t 10-00:00:00 ## time limit, max in Chisholm is 90 days
+#SBATCH -p sched_mit_chisholm ## tell it which scheduler
+#SBATCH -J skewer_SAMPLE ## job name, unique for each one
+#SBATCH --mem=250G ## if mapping, go a little bit above the database size
+#SBATCH --job-name=single_%j
+#SBATCH --output=single_%j.out
+#SBATCH --error=single_%j.err
+
+prodigal -i /nobackup1/kunyin71/contigs_single/Hep161_S195_results/final.contigs.fa -o hep161.genes -a hep161.faa -p meta
+
+prodigal -i  -o hep174.genes -a hep161.faa -p meta
+```
+
+### Mapping reads with contigs
+
+build reference library with the assembled contigs
+
+```
+#!/bin/bash
+#SBATCH -N 1 ## 
+#SBATCH -n 20 ## cores, chisholm have 10 nodes each with 250 GB ram and 20 cpus/cores
+#SBATCH -t 10-00:00:00 ## time limit, max in Chisholm is 90 days
+#SBATCH -p sched_mit_chisholm ## tell it which scheduler
+#SBATCH -J skewer_SAMPLE ## job name, unique for each one
+#SBATCH --mem=250G ## if mapping, go a little bit above the database size
+#SBATCH --job-name=refer_back
+#SBATCH --output=/nobackup1/kunyin71/map_contigs/refer_%j.out
+#SBATCH --error=/nobackup1/kunyin71/map_contigs/refer_%j.err
+
+/home/kunyin71/software/bowtie2/bowtie2-build /home/kunyin71/build_contigs/results/final.contigs.fa /nobackup1/kunyin71/map_contigs/reference_index
+
+```
+Irratative script
+
+```
+#!/bin/bash
+#SBATCH -N 1
+#SBATCH -n 20
+#SBATCH -t 10-00:00:00
+#SBATCH -p sched_mit_chisholm
+#SBATCH -J bowtie2_alignment_${1}
+#SBATCH --mem=250G
+#SBATCH -o bowtie2_alignment_%j.out
+#SBATCH -e bowtie2_alignment_%j.err
+
+# Sample name from command line argument
+SAMPLE_NAME=$1
+
+# Define base directory for reads and results
+READS_DIR=/nobackup1/kunyin71/Illumina_DNA_Reads/trimmed
+REFERENCE_INDEX=/home/kunyin71/map_contigs/reference_index
+RESULTS_DIR=/nobackup1/kunyin71/map_contigs
+
+# Run Bowtie2
+/home/kunyin71/software/bowtie2/bowtie2 -p 20 -x $REFERENCE_INDEX \
+-1 $READS_DIR/${SAMPLE_NAME}-trimmed-pair1.fastq.gz \
+-2 $READS_DIR/${SAMPLE_NAME}-trimmed-pair2.fastq.gz \
+-S $RESULTS_DIR/${SAMPLE_NAME}_aligned.sam
+
+```
+
+call the above script
+
+```
+#!/bin/bash
+
+# Array of sample names
+SAMPLE_NAMES=("Hep174_S194" "Hep147_S196" "Hep184_S197" "Hep225_S198" "Hep20_S193" "Hep161_S195")
+
+# Iterate over sample names and call the script for each
+for SAMPLE_NAME in "${SAMPLE_NAMES[@]}"
+do
+    sbatch run_bowtie2.sh $SAMPLE_NAME
+done
+```
+### Convert .SAM file to .BAM file
+Following the instructions, install samtools, bcftools and htslib from this website. https://www.htslib.org/download/
+
+
 
 ## Build metagenome-assembled genomes
 Hereby are the top three most widely-used MAG assembling tools. The ideal case is that you have three set of results coming individually from the three tools and finally consolidate them together.
@@ -190,9 +276,38 @@ Hereby are the top three most widely-used MAG assembling tools. The ideal case i
 conda config --add channels defaults
 conda config --add channels bioconda
 conda config --add channels conda-forge
-conda create --prefix /home/kunyin71/software/concoct_env python=3 concoct
-conda activate /home/kunyin71/software/concoct_env
+conda create --prefix /home/kunyin71/software/conda_envs/concoct_env python=3 concoct
+conda activate /home/kunyin71/software/conda_envs/concoct_env
 
+```
+
+### using CONCOCT
+conda activate /home/kunyin71/software/conda_envs/concoct_env
+
+```
+#!/bin/bash
+#SBATCH -N 1
+#SBATCH -n 20
+#SBATCH -t 10-00:00:00
+#SBATCH -p sched_mit_chisholm
+#SBATCH -J concoct
+#SBATCH --mem=250G
+
+SAMPLE_NAME=$1
+DIR=/nobackup1/kunyin71/concoct/$SAMPLE_NAME
+mkdir $DIR
+
+/home/kunyin71/software/conda_envs/concoct_env/bin/cut_up_fasta.py /nobackup1/kunyin71/build_contigs/results/final.contigs.fa -c 10000 -o 0 --merge_last -b $DIR/contigs_10K.bed > $DIR/contigs_10K.fa
+
+/home/kunyin71/software/conda_envs/concoct_env/bin/concoct_coverage_table.py $DIR/contigs_10K.bed /nobackup1/kunyin71/sam_to_bam/sorted_${SAMPLE_NAME}_aligned.bam > $DIR/coverage_table.tsv
+
+concoct --composition_file $DIR/contigs_10K.fa --coverage_file $DIR/coverage_table.tsv -b $DIR/
+
+/home/kunyin71/software/conda_envs/concoct_env/bin/merge_cutup_clustering.py $DIR/clustering_gt1000.csv > $DIR/clustering_merged.csv
+
+mkdir $DIR/fasta_bins
+
+/home/kunyin71/software/conda_envs/concoct_env/bin/extract_fasta_bins.py /nobackup1/kunyin71/build_contigs/results/final.contigs.fa $DIR/clustering_merged.csv --output_path $DIR/fasta_bins
 ```
 ### Install MaxBin
 Download from https://sourceforge.net/projects/maxbin2/files/latest/download, cd into the src file, ```make```, ```cd ..```
