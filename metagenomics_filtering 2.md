@@ -25,7 +25,8 @@ Currently, we utilize the shared resources from the Chisholm lab. You will need 
 This is the command to see how many nodes are used. 
 
 ```
-sinfo -N -p sched_mit_chisholm -l 
+sinfo -N -p sched_mit_chisholm -l
+squeue -p sched_mit_chisholm -o "%.18i %.9P %.8j %.8u %.2t %.10M %.6D %R"
 ```
 
 This is the code to call just one node. You will find your server changed to Nodexxx after running it in the command line, you are allocated all the cpus and memory within one node for a day
